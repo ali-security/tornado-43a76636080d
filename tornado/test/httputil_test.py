@@ -4,7 +4,7 @@ from __future__ import absolute_import, division, print_function
 from tornado.httputil import (
     url_concat, parse_multipart_form_data, HTTPHeaders, format_timestamp,
     HTTPServerRequest, parse_request_start_line, parse_cookie, qs_to_qsl,
-    HTTPInputError,
+    HTTPInputError, _unquote_cookie, _unquote_replace
 )
 from tornado.escape import utf8, native_str
 from tornado.util import PY3
@@ -535,3 +535,55 @@ class ParseCookieTest(unittest.TestCase):
         # but parse_cookie() should parse whitespace the same way
         # document.cookie parses whitespace.
         self.assertEqual(parse_cookie('  =  b  ;  ;  =  ;   c  =  ;  '), {'': 'b', 'c': ''})
+
+    def test_unquote(self):
+        # Copied from
+        # https://github.com/python/cpython/blob/dc7a2b6522ec7af41282bc34f405bee9b306d611/Lib/test/test_http_cookies.py#L62
+        cases = [
+            (r'a="b=\""', 'b="'),
+            (r'a="b=\\"', "b=\\"),
+            (r'a="b=\="', "b=="),
+            (r'a="b=\n"', "b=n"),
+            (r'a="b=\042"', 'b="'),
+            (r'a="b=\134"', "b=\\"),
+            (r'a="b=\377"', "b=\xff"),
+            (r'a="b=\400"', "b=400"),
+            (r'a="b=\42"', "b=42"),
+            (r'a="b=\\042"', "b=\\042"),
+            (r'a="b=\\134"', "b=\\134"),
+            (r'a="b=\\\""', 'b=\\"'),
+            (r'a="b=\\\042"', 'b=\\"'),
+            (r'a="b=\134\""', 'b=\\"'),
+            (r'a="b=\134\042"', 'b=\\"'),
+        ]
+        for i, (encoded, decoded) in enumerate(cases):
+            c = parse_cookie(encoded)
+            self.assertEqual(
+                c["a"], decoded,
+                "Case {} failed: expected {}, got {}".format(i, decoded, c["a"])
+            )
+
+def test_unquote_large(self):
+    # Adapted from
+    # https://github.com/python/cpython/blob/dc7a2b6522ec7af41282bc34f405bee9b306d611/Lib/test/test_http_cookies.py#L87
+    # Modified from that test because we handle semicolons differently from the stdlib.
+    #
+    # This is a performance regression test: prior to improvements in Tornado 6.4.2, this test
+    # would take over a minute with n= 100k. Now it runs in tens of milliseconds.
+    n = 100000
+    cases = [r"\\", r"\134"]
+    for i, encoded in enumerate(cases):
+        start = time.time()
+        data = 'a="b=' + encoded * n + '"'
+        value = parse_cookie(data)["a"]
+        end = time.time()
+        
+        try:
+            self.assertEqual(value[:3], "b=\\", "Case {} failed: Start mismatch".format(i))
+            self.assertEqual(value[-3:], "\\\\\\", "Case {} failed: End mismatch".format(i))
+            self.assertEqual(len(value), n + 2, "Case {} failed: Length mismatch".format(i))
+            self.assertLess(end - start, 1, "Case {} failed: Test took too long".format(i))
+        except AssertionError as e:
+            print("Test failed for case {}: {}".format(i, e))
+            raise
+
