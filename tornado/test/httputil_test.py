@@ -276,6 +276,33 @@ Foo
         self.assertEqual(file["filename"], "ab.txt")
         self.assertEqual(file["body"], b"Foo")
 
+    def test_disposition_param_linear_performance(self):
+        # This is a regression test for performance of parsing parameters
+        # to the content-disposition header, specifically for semicolons within
+        # quoted strings.
+        def f(n):
+            start = time.time()
+            message = (
+                b"--1234\r\nContent-Disposition: form-data; "
+                + b'x="'
+                + b";" * n
+                + b'"; '
+                + b'name="files"; filename="a.txt"\r\n\r\nFoo\r\n--1234--\r\n'
+            )
+            args = {}
+            files = {}
+            parse_multipart_form_data(b"1234", message, args, files)
+            return time.time() - start
+
+        # Take the best of three runs at each size (symmetrically, so the
+        # ratio is not biased) to limit the impact of noise from the other
+        # jobs sharing a CI machine.
+        d1 = min(f(1000) for _ in range(3))
+        d2 = min(f(10000) for _ in range(3))
+        if d2 / d1 > 20:
+            # d2 should be about 10x d1 but allow a wide margin for variability.
+            self.fail("Disposition param parsing is not linear: d1=%r vs d2=%r" % (d1, d2))
+
     def test_multipart_config(self):
         boundary = b"1234"
         body = b"""--1234
