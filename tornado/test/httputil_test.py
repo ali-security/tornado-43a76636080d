@@ -344,6 +344,27 @@ Foo: even
                                     newline, encoding)
                     raise
 
+    def test_unicode_whitespace(self):
+        # Only tabs and spaces are to be stripped according to the HTTP standard.
+        # Other unicode whitespace is to be left as-is. In the context of headers,
+        # this specifically means the whitespace characters falling within the
+        # latin1 charset.
+        # (note the u"" prefixes: this file does not use unicode_literals and
+        # the py2 legs would otherwise see a literal backslash-u sequence)
+        whitespace = [
+            (u" ", True),  # SPACE
+            (u"\t", True),  # TAB
+            (u"\u00a0", False),  # NON-BREAKING SPACE
+            (u"\u0085", False),  # NEXT LINE
+        ]
+        for c, stripped in whitespace:
+            headers = HTTPHeaders.parse(u"Transfer-Encoding: %schunked" % c)
+            if stripped:
+                expected = [(u"Transfer-Encoding", u"chunked")]
+            else:
+                expected = [(u"Transfer-Encoding", u"%schunked" % c)]
+            self.assertEqual(expected, list(headers.get_all()))
+
     def test_optional_cr(self):
         # Both CRLF and LF should be accepted as separators. CR should not be
         # part of the data when followed by LF, but it is a normal char

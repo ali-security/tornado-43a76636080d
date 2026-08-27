@@ -394,6 +394,58 @@ class HTTPServerRawTest(AsyncHTTPTestCase):
         self.stream.close()
         super(HTTPServerRawTest, self).tearDown()
 
+    def test_chunked_request_body_duplicate_header(self):
+        with ExpectLog(gen_log, ".*Unsupported Transfer-Encoding chunked,chunked"):
+            self.stream.write(b"""\
+POST /echo HTTP/1.1
+Host: localhost
+Transfer-Encoding: chunked
+Transfer-Encoding: chunked
+
+""")
+            read_stream_body(self.stream, self.stop)
+            start_line, headers, response = self.wait()
+            self.assertEqual('HTTP/1.1', start_line.version)
+            self.assertEqual(400, start_line.code)
+            self.assertEqual('Bad Request', start_line.reason)
+
+    def test_chunked_request_body_unsupported_transfer_encoding(self):
+        # We don't support transfer-encodings other than chunked.
+        self.stream.write(
+            b"""\
+POST /echo HTTP/1.1
+Transfer-Encoding: gzip, chunked
+
+2
+ok
+0
+
+"""
+        )
+        with ExpectLog(gen_log, ".*Unsupported Transfer-Encoding gzip, chunked"):
+            read_stream_body(self.stream, self.stop)
+            start_line, headers, response = self.wait()
+        self.assertEqual(400, start_line.code)
+
+    def test_chunked_request_body_transfer_encoding_and_content_length(self):
+        # Transfer-encoding and content-length are mutually exclusive
+        self.stream.write(
+            b"""\
+POST /echo HTTP/1.1
+Transfer-Encoding: chunked
+Content-Length: 2
+
+2
+ok
+0
+
+"""
+        )
+        with ExpectLog(gen_log, ".*Response with both Transfer-Encoding and Content-Length"):
+            read_stream_body(self.stream, self.stop)
+            start_line, headers, response = self.wait()
+        self.assertEqual(400, start_line.code)
+
     def test_empty_request(self):
         self.stream.close()
         self.io_loop.add_timeout(datetime.timedelta(seconds=0.001), self.stop)
