@@ -22,6 +22,7 @@ from __future__ import absolute_import, division, print_function
 
 import re
 import warnings
+import sys
 
 from tornado.concurrent import (Future, future_add_done_callback,
                                 future_set_result_unless_cancelled)
@@ -381,7 +382,7 @@ class HTTP1Connection(httputil.HTTPConnection):
              start_line.code == 304)):
             self._expected_content_remaining = 0
         elif 'Content-Length' in headers:
-            self._expected_content_remaining = int(headers['Content-Length'])
+            self._expected_content_remaining = parse_int(headers['Content-Length'])
         else:
             self._expected_content_remaining = None
         # TODO: headers are supposed to be of type str, but we still have some
@@ -553,7 +554,7 @@ class HTTP1Connection(httputil.HTTPConnection):
                 headers["Content-Length"] = pieces[0]
 
             try:
-                content_length = int(headers["Content-Length"])
+                content_length = parse_int(headers["Content-Length"])
             except ValueError:
                 # Handles non-integer Content-Length value.
                 raise httputil.HTTPInputError(
@@ -599,8 +600,11 @@ class HTTP1Connection(httputil.HTTPConnection):
         # TODO: "chunk extensions" http://tools.ietf.org/html/rfc2616#section-3.6.1
         total_size = 0
         while True:
-            chunk_len = yield self.stream.read_until(b"\r\n", max_bytes=64)
-            chunk_len = int(chunk_len.strip(), 16)
+            chunk_len_str = yield self.stream.read_until(b"\r\n", max_bytes=64)
+            try:
+                chunk_len = parse_hex_int(native_str(chunk_len_str[:-2]))
+            except ValueError:
+                raise httputil.HTTPInputError("invalid chunk size")
             if chunk_len == 0:
                 crlf = yield self.stream.read_bytes(2)
                 if crlf != b'\r\n':
@@ -749,3 +753,31 @@ class HTTP1ServerConnection(object):
                 yield gen.moment
         finally:
             delegate.on_close(self)
+
+
+DIGITS = re.compile(r"[0-9]+\Z")
+HEXDIGITS = re.compile(r"[0-9a-fA-F]+\Z")
+
+
+def parse_int(s):
+    """Parse a non-negative integer from a string."""
+    if sys.version_info >= (3, 4):
+        match_method = DIGITS.fullmatch
+    else:
+        match_method = DIGITS.match
+
+    if match_method(s) is None:
+        raise ValueError("not an integer: %r" % s)
+    return int(s)
+
+
+def parse_hex_int(s):
+    """Parse a non-negative hexadecimal integer from a string."""
+    if sys.version_info >= (3, 4):
+        match_method = HEXDIGITS.fullmatch
+    else:
+        match_method = HEXDIGITS.match
+
+    if match_method(s) is None:
+        raise ValueError("not a hexadecimal integer: %r" % s)
+    return int(s, 16)

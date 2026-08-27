@@ -9,7 +9,7 @@ from tornado.httpserver import HTTPServer
 from tornado.httputil import HTTPHeaders, HTTPMessageDelegate, HTTPServerConnectionDelegate, ResponseStartLine  # noqa: E501
 from tornado.iostream import IOStream
 from tornado.locks import Event
-from tornado.log import gen_log
+from tornado.log import gen_log, app_log
 from tornado.netutil import ssl_options_to_context
 from tornado.simple_httpclient import SimpleAsyncHTTPClient
 from tornado.testing import AsyncHTTPTestCase, AsyncHTTPSTestCase, AsyncTestCase, ExpectLog, gen_test  # noqa: E501
@@ -473,6 +473,99 @@ bar
 
 """.replace(b"\n", b"\r\n"))
             yield self.stream.read_until_close()
+
+    def test_chunked_request_body_invalid_size(self):
+        # Chunk size must be a hexadecimal integer. "1_a" is accepted by
+        # int(x, 16) on Python 3.6 and newer, which would let an attacker
+        # smuggle a request past an intermediary that reads it differently.
+        with ExpectLog(gen_log, '.*invalid chunk size'):
+            self.stream.write(b"""\
+POST /echo HTTP/1.1
+Transfer-Encoding: chunked
+
+1_a
+1234567890abcdef1234567890
+0
+
+""".replace(b"\n", b"\r\n"))
+            read_stream_body(self.stream, self.stop)
+            start_line, headers, response = self.wait()
+            self.assertEqual(400, start_line.code)
+            self.assertEqual('Bad Request', start_line.reason)
+
+    def test_chunked_request_body_leading_plus_size(self):
+        # int(x, 16) accepts a leading plus on every supported version of
+        # Python, so "+1a" is read as a 26-byte chunk here while an
+        # intermediary that follows RFC 7230 would reject it (or vice versa).
+        with ExpectLog(gen_log, '.*invalid chunk size'):
+            self.stream.write(b"""\
+POST /echo HTTP/1.1
+Transfer-Encoding: chunked
+
++1a
+1234567890abcdef1234567890
+0
+
+""".replace(b"\n", b"\r\n"))
+            read_stream_body(self.stream, self.stop)
+            start_line, headers, response = self.wait()
+            self.assertEqual(400, start_line.code)
+            self.assertEqual('Bad Request', start_line.reason)
+
+    def test_invalid_content_length_1(self):
+        with ExpectLog(gen_log, '.*Only integer Content-Length is allowed'):
+            self.stream.write(b"""\
+POST /echo HTTP/1.1
+Content-Length: 1_0
+
+body data
+""".replace(b"\n", b"\r\n"))
+            read_stream_body(self.stream, self.stop)
+            start_line, headers, response = self.wait()
+            self.assertEqual(400, start_line.code)
+            self.assertEqual('Bad Request', start_line.reason)
+
+    def test_invalid_content_length_2(self):
+        with ExpectLog(gen_log, '.*Only integer Content-Length is allowed'):
+            self.stream.write(b"""\
+POST /echo HTTP/1.1
+Content-Length: +10
+
+more body data
+""".replace(b"\n", b"\r\n"))
+            read_stream_body(self.stream, self.stop)
+            start_line, headers, response = self.wait()
+            self.assertEqual(400, start_line.code)
+            self.assertEqual('Bad Request', start_line.reason)
+
+    def test_invalid_content_length_3(self):
+        with ExpectLog(gen_log, '.*Only integer Content-Length is allowed'):
+            self.stream.write(b"""\
+POST /echo HTTP/1.1
+Content-Length: foo
+
+more body data
+""".replace(b"\n", b"\r\n"))
+            read_stream_body(self.stream, self.stop)
+            start_line, headers, response = self.wait()
+            self.assertEqual(400, start_line.code)
+            self.assertEqual('Bad Request', start_line.reason)
+
+    def test_invalid_content_length_4(self):
+        # A negative Content-Length is accepted by int(), and makes the body
+        # reader consume zero bytes, so everything after the headers is
+        # parsed as a second (smuggled) request.
+        with ExpectLog(gen_log, '.*Only integer Content-Length is allowed'):
+            self.stream.write(b"""\
+POST /echo HTTP/1.1
+Content-Length: -10
+
+more body data
+""".replace(b"\n", b"\r\n"))
+            read_stream_body(self.stream, self.stop)
+            start_line, headers, response = self.wait()
+            self.assertEqual(400, start_line.code)
+            self.assertEqual('Bad Request', start_line.reason)
 
 
 class XHeaderTest(HandlerBaseTestCase):
@@ -948,6 +1041,56 @@ class StreamingChunkSizeTest(AsyncHTTPTestCase):
             write(compressed[20:])
         self.fetch_chunk_sizes(body_producer=body_producer,
                                headers={'Content-Encoding': 'gzip'})
+
+
+class InvalidOutputContentLengthTest(AsyncHTTPTestCase):
+    class MessageDelegate(HTTPMessageDelegate):
+        def __init__(self, connection):
+            self.connection = connection
+
+        def headers_received(self, start_line, headers):
+            content_lengths = {
+                "normal": "10",
+                "alphabetic": "foo",
+                "leading plus": "+10",
+                "underscore": "1_0",
+            }
+            self.connection.write_headers(
+                ResponseStartLine("HTTP/1.1", 200, "OK"),
+                HTTPHeaders({"Content-Length": content_lengths[headers["x-test"]]}),
+            )
+            self.connection.write(b"1234567890")
+            self.connection.finish()
+
+    def get_app(self):
+        class App(HTTPServerConnectionDelegate):
+            def start_request(self, server_conn, request_conn):
+                return InvalidOutputContentLengthTest.MessageDelegate(request_conn)
+
+        return App()
+
+    def test_valid_content_length(self):
+        response = self.fetch("/", method="GET", headers={"x-test": "normal"})
+        response.rethrow()
+        self.assertEqual(response.body, b"1234567890")
+
+    def test_alphabetic_content_length(self):
+        with ExpectLog(app_log, "Uncaught exception"):
+            with self.assertRaises(HTTPError):
+                self.fetch("/", method="GET", headers={"x-test": "alphabetic"},
+                           raise_error=True)
+
+    def test_leading_plus_content_length(self):
+        with ExpectLog(app_log, "Uncaught exception"):
+            with self.assertRaises(HTTPError):
+                self.fetch("/", method="GET", headers={"x-test": "leading plus"},
+                           raise_error=True)
+
+    def test_underscore_content_length(self):
+        with ExpectLog(app_log, "Uncaught exception"):
+            with self.assertRaises(HTTPError):
+                self.fetch("/", method="GET", headers={"x-test": "underscore"},
+                           raise_error=True)
 
 
 class MaxHeaderSizeTest(AsyncHTTPTestCase):
