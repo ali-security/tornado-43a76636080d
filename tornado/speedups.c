@@ -17,6 +17,11 @@ static PyObject* websocket_mask(PyObject* self, PyObject* args) {
         return NULL;
     }
 
+    if (mask_len != 4) {
+        PyErr_SetString(PyExc_ValueError, "mask must be 4 bytes");
+        return NULL;
+    }
+
     uint32_mask = ((uint32_t*)mask)[0];
 
     result = PyBytes_FromStringAndSize(NULL, data_len);
