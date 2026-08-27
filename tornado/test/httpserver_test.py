@@ -989,11 +989,17 @@ class GzipBaseTest(object):
 
 class GzipTest(GzipBaseTest, AsyncHTTPTestCase):
     def get_httpserver_options(self):
-        return dict(decompress_request=True)
+        return dict(decompress_request=True, max_body_size=100)
 
     def test_gzip(self):
         response = self.post_gzip('foo=bar')
         self.assertEquals(json_decode(response.body), {u'foo': [u'bar']})
+
+    def test_size_limit(self):
+        # A small compressed body that decompresses to more than
+        # max_body_size is rejected instead of being buffered.
+        with ExpectLog(gen_log, '.*decompressed body too large'):
+            self.post_gzip('x' * 101)
 
 
 class GzipUnsupportedTest(GzipBaseTest, AsyncHTTPTestCase):
