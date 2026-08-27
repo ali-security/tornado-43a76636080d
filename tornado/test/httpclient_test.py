@@ -12,7 +12,7 @@ from io import BytesIO
 import time
 import unicodedata
 
-from tornado.escape import utf8, native_str
+from tornado.escape import utf8, native_str, json_encode
 from tornado import gen
 from tornado.httpclient import HTTPRequest, HTTPResponse, _RequestProxy, HTTPError, HTTPClient
 from tornado.httpserver import HTTPServer
@@ -122,6 +122,12 @@ class SetHeaderHandler(RequestHandler):
                         self.request.arguments['v']):
             self.set_header(k, v)
 
+
+class EchoHeadersHandler(RequestHandler):
+    def get(self):
+        self.write(json_encode(dict(self.request.headers.get_all())))
+
+
 # These tests end up getting run redundantly: once here with the default
 # HTTPClient implementation, and then again in each implementation's own
 # test suite.
@@ -143,7 +149,20 @@ class HTTPClientCommonTestCase(AsyncHTTPTestCase):
             url("/all_methods", AllMethodsHandler),
             url('/patch', PatchHandler),
             url('/set_header', SetHeaderHandler),
+            url('/echo_headers', EchoHeadersHandler),
         ], gzip=True)
+
+    def setUp(self):
+        super(HTTPClientCommonTestCase, self).setUp()
+
+        # Add a second port (serving the same app) to the HTTP server, so we can test
+        # the effects of redirects that span different origins.
+        sock, port = bind_unused_port()
+        self.http_server.add_socket(sock)
+        self.__port2 = port
+
+    def get_url2(self, path):
+        return '%s://127.0.0.1:%d%s' % (self.get_protocol(), self.__port2, path)
 
     def test_patch_receives_payload(self):
         body = b"some patch data"
@@ -577,6 +596,7 @@ X-XSS-Protection: 1;
                 yield self.http_client.fetch("/hello", headers={"foo": header})
             with self.assertRaises(ValueError):
                 yield self.http_client.fetch("/hello", headers={header: "foo"})
+
 
 class RequestProxyTest(unittest.TestCase):
     def test_request_set(self):

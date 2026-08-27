@@ -11,7 +11,7 @@ import socket
 import ssl
 import sys
 
-from tornado.escape import to_unicode, utf8
+from tornado.escape import to_unicode, utf8, json_decode
 from tornado import gen
 from tornado.httpclient import AsyncHTTPClient
 from tornado.httputil import HTTPHeaders, ResponseStartLine
@@ -35,6 +35,54 @@ class SimpleHTTPClientCommonTestCase(httpclient_test.HTTPClientCommonTestCase):
         client = SimpleAsyncHTTPClient(force_instance=True)
         self.assertTrue(isinstance(client, SimpleAsyncHTTPClient))
         return client
+
+    # This test uses the /echo_headers handler and the get_url2 helper defined in
+    # HTTPClientCommonTestCase, but it lives here rather than there because stripping
+    # these headers is implemented in simple_httpclient: curl_httpclient leaves
+    # redirects to libcurl, so running it there would assert libcurl's notion of a
+    # cross-origin redirect instead of tornado's.
+    def test_strip_headers_on_redirect(self):
+        # Ensure that headers that should be stripped on cross-origin redirects
+        # are stripped, even if the redirect is to a different port on localhost.
+        test_cases = [
+            ("manual auth header", dict(headers={"Authorization": "secret"}), ""),
+            ("credentials in URL", dict(), "me:secret"),
+            ("auth parameters", dict(auth_username="me", auth_password="secret"), ""),
+            ("manual cookie header", dict(headers={"Cookie": "secret"}), ""),
+        ]
+        for name, case_kwargs, url_creds in test_cases:
+            # This version doesn't send a User-Agent header unless asked to, so set one
+            # explicitly: it is the canary proving that the headers which should not be
+            # stripped still make it through the redirect.
+            kwargs = dict(case_kwargs, user_agent="test-agent")
+            # Different origin (same host, different port): auth must be stripped.
+            url = self.get_url(
+                "/redirect?url=%s&status=302" % self.get_url2("/echo_headers"))
+            if url_creds:
+                url = url.replace("http://", "http://%s@" % url_creds)
+            response = self.fetch(url, **kwargs)
+            response.rethrow()
+            echoed_headers = json_decode(response.body)
+            # Confirm that non-auth headers are getting through
+            self.assertIn("User-Agent", echoed_headers, name)
+            # Auth headers are stripped, however they were set.
+            self.assertNotIn("Authorization", echoed_headers, name)
+            self.assertNotIn("Cookie", echoed_headers, name)
+            # Same origin: the auth headers are not stripped.
+            url = self.get_url(
+                "/redirect?url=%s&status=302" % self.get_url("/echo_headers"))
+            if url_creds:
+                url = url.replace("http://", "http://%s@" % url_creds)
+            response = self.fetch(url, **kwargs)
+            response.rethrow()
+            echoed_headers = json_decode(response.body)
+            # Confirm that non-auth headers are getting through
+            self.assertIn("User-Agent", echoed_headers, name)
+            # Auth headers are not stripped when the redirect is same-origin.
+            # Each of our tests uses one of these headers, but not both.
+            self.assertTrue(
+                "Authorization" in echoed_headers or "Cookie" in echoed_headers,
+                name)
 
 
 class TriggerHandler(RequestHandler):
