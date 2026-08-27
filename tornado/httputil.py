@@ -33,7 +33,6 @@ import unicodedata
 import warnings
 
 from tornado.escape import native_str, parse_qs_bytes, utf8
-from tornado.log import gen_log
 from tornado.util import ObjectDict, PY3, unicode_type
 
 if PY3:
@@ -478,6 +477,11 @@ class HTTPServerRequest(object):
             return None
 
     def _parse_body(self):
+        # Make this method idempotent - only parse once
+        if hasattr(self, '_body_parsed') and self._body_parsed:
+            return
+        self._body_parsed = True
+        
         parse_body_arguments(
             self.headers.get("Content-Type", ""), self.body,
             self.body_arguments, self.files,
@@ -751,20 +755,23 @@ def parse_body_arguments(content_type, body, arguments, files, headers=None):
     and ``files`` parameters are dictionaries that will be updated
     with the parsed contents.
     """
-    if headers and 'Content-Encoding' in headers:
-        gen_log.warning("Unsupported Content-Encoding: %s",
-                        headers['Content-Encoding'])
-        return
     if content_type.startswith("application/x-www-form-urlencoded"):
+        if headers and 'Content-Encoding' in headers:
+            raise HTTPInputError(
+                "Unsupported Content-Encoding: %s" % headers['Content-Encoding']
+            )
         try:
             uri_arguments = parse_qs_bytes(native_str(body), keep_blank_values=True)
         except Exception as e:
-            gen_log.warning('Invalid x-www-form-urlencoded body: %s', e)
-            uri_arguments = {}
+            raise HTTPInputError("Invalid x-www-form-urlencoded body: %s" % e)
         for name, values in uri_arguments.items():
             if values:
                 arguments.setdefault(name, []).extend(values)
     elif content_type.startswith("multipart/form-data"):
+        if headers and 'Content-Encoding' in headers:
+            raise HTTPInputError(
+                "Unsupported Content-Encoding: %s" % headers['Content-Encoding']
+            )
         try:
             fields = content_type.split(";")
             for field in fields:
@@ -773,9 +780,9 @@ def parse_body_arguments(content_type, body, arguments, files, headers=None):
                     parse_multipart_form_data(utf8(v), body, arguments, files)
                     break
             else:
-                raise ValueError("multipart boundary not found")
+                raise HTTPInputError("multipart boundary not found")
         except Exception as e:
-            gen_log.warning("Invalid multipart/form-data: %s", e)
+            raise HTTPInputError("Invalid multipart/form-data: %s" % e)
 
 
 def parse_multipart_form_data(boundary, data, arguments, files):
@@ -799,26 +806,22 @@ def parse_multipart_form_data(boundary, data, arguments, files):
         boundary = boundary[1:-1]
     final_boundary_index = data.rfind(b"--" + boundary + b"--")
     if final_boundary_index == -1:
-        gen_log.warning("Invalid multipart/form-data: no final boundary")
-        return
+        raise HTTPInputError("Invalid multipart/form-data: no final boundary found")
     parts = data[:final_boundary_index].split(b"--" + boundary + b"\r\n")
     for part in parts:
         if not part:
             continue
         eoh = part.find(b"\r\n\r\n")
         if eoh == -1:
-            gen_log.warning("multipart/form-data missing headers")
-            continue
+            raise HTTPInputError("multipart/form-data missing headers")
         headers = HTTPHeaders.parse(part[:eoh].decode("utf-8"))
         disp_header = headers.get("Content-Disposition", "")
         disposition, disp_params = _parse_header(disp_header)
         if disposition != "form-data" or not part.endswith(b"\r\n"):
-            gen_log.warning("Invalid multipart/form-data")
-            continue
+            raise HTTPInputError("Invalid multipart/form-data")
         value = part[eoh + 4:-2]
         if not disp_params.get("name"):
-            gen_log.warning("multipart/form-data value missing name")
-            continue
+            raise HTTPInputError("multipart/form-data missing name")
         name = disp_params["name"]
         if disp_params.get("filename"):
             ctype = headers.get("Content-Type", "application/unknown")
