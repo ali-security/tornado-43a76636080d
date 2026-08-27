@@ -746,7 +746,56 @@ def _int_or_none(val):
     return int(val)
 
 
-def parse_body_arguments(content_type, body, arguments, files, headers=None):
+class ParseMultipartConfig(object):
+    """This class configures the parsing of ``multipart/form-data`` request bodies.
+
+    Its primary purpose is to place limits on the size and complexity of request messages
+    to avoid potential denial-of-service attacks.
+    """
+
+    def __init__(self, enabled=True, max_parts=100, max_part_header_size=10 * 1024):
+        self.enabled = enabled
+        """Set this to false to disable the parsing of ``multipart/form-data`` requests entirely."""
+        self.max_parts = max_parts
+        """The maximum number of parts accepted in a multipart request."""
+        self.max_part_header_size = max_part_header_size
+        """The maximum size of the headers for each part of a multipart request."""
+
+
+class ParseBodyConfig(object):
+    """This class configures the parsing of request bodies."""
+
+    def __init__(self, multipart=None):
+        self.multipart = multipart if multipart is not None else ParseMultipartConfig()
+        """Configuration for ``multipart/form-data`` request bodies."""
+
+
+_DEFAULT_PARSE_BODY_CONFIG = ParseBodyConfig()
+
+
+def set_parse_body_config(config):
+    r"""Sets the **global** default configuration for parsing request bodies.
+
+    This global setting is provided as a stopgap for applications that need to raise the limits
+    or who wish to disable the parsing of multipart/form-data bodies entirely.
+
+    >>> content_type = "multipart/form-data; boundary=foo"
+    >>> multipart_body = b"--foo--\r\n"
+    >>> parse_body_arguments(content_type, multipart_body, {}, {})
+    >>> multipart_config = ParseMultipartConfig(enabled=False)
+    >>> config = ParseBodyConfig(multipart=multipart_config)
+    >>> set_parse_body_config(config)
+    >>> parse_body_arguments(content_type, multipart_body, {}, {})  # doctest: +IGNORE_EXCEPTION_DETAIL
+    Traceback (most recent call last):
+        ...
+    tornado.httputil.HTTPInputError: multipart/form-data parsing is disabled
+    >>> set_parse_body_config(ParseBodyConfig())  # reset to defaults
+    """
+    global _DEFAULT_PARSE_BODY_CONFIG
+    _DEFAULT_PARSE_BODY_CONFIG = config
+
+
+def parse_body_arguments(content_type, body, arguments, files, headers=None, config=None):
     """Parses a form request body.
 
     Supports ``application/x-www-form-urlencoded`` and
@@ -755,6 +804,8 @@ def parse_body_arguments(content_type, body, arguments, files, headers=None):
     and ``files`` parameters are dictionaries that will be updated
     with the parsed contents.
     """
+    if config is None:
+        config = _DEFAULT_PARSE_BODY_CONFIG
     if content_type.startswith("application/x-www-form-urlencoded"):
         if headers and 'Content-Encoding' in headers:
             raise HTTPInputError(
@@ -774,10 +825,15 @@ def parse_body_arguments(content_type, body, arguments, files, headers=None):
             )
         try:
             fields = content_type.split(";")
+            if fields[0].strip() != "multipart/form-data":
+                # This catches "Content-Type: multipart/form-dataxyz"
+                raise HTTPInputError("Invalid content type")
             for field in fields:
                 k, sep, v = field.strip().partition("=")
                 if k == "boundary" and v:
-                    parse_multipart_form_data(utf8(v), body, arguments, files)
+                    parse_multipart_form_data(
+                        utf8(v), body, arguments, files, config=config.multipart
+                    )
                     break
             else:
                 raise HTTPInputError("multipart boundary not found")
@@ -785,7 +841,7 @@ def parse_body_arguments(content_type, body, arguments, files, headers=None):
             raise HTTPInputError("Invalid multipart/form-data: %s" % e)
 
 
-def parse_multipart_form_data(boundary, data, arguments, files):
+def parse_multipart_form_data(boundary, data, arguments, files, config=None):
     """Parses a ``multipart/form-data`` body.
 
     The ``boundary`` and ``data`` parameters are both byte strings.
@@ -797,6 +853,10 @@ def parse_multipart_form_data(boundary, data, arguments, files):
        Now recognizes non-ASCII filenames in RFC 2231/5987
        (``filename*=``) format.
     """
+    if config is None:
+        config = _DEFAULT_PARSE_BODY_CONFIG.multipart
+    if not config.enabled:
+        raise HTTPInputError("multipart/form-data parsing is disabled")
     # The standard allows for the boundary to be quoted in the header,
     # although it's rare (it happens at least for google app engine
     # xmpp).  I think we're also supposed to handle backslash-escapes
@@ -808,12 +868,16 @@ def parse_multipart_form_data(boundary, data, arguments, files):
     if final_boundary_index == -1:
         raise HTTPInputError("Invalid multipart/form-data: no final boundary found")
     parts = data[:final_boundary_index].split(b"--" + boundary + b"\r\n")
+    if len(parts) > config.max_parts:
+        raise HTTPInputError("multipart/form-data has too many parts")
     for part in parts:
         if not part:
             continue
         eoh = part.find(b"\r\n\r\n")
         if eoh == -1:
             raise HTTPInputError("multipart/form-data missing headers")
+        if eoh > config.max_part_header_size:
+            raise HTTPInputError("multipart/form-data part header too large")
         headers = HTTPHeaders.parse(part[:eoh].decode("utf-8"))
         disp_header = headers.get("Content-Disposition", "")
         disposition, disp_params = _parse_header(disp_header)
@@ -988,7 +1052,7 @@ def encode_username_password(username, password):
 
 def doctests():
     import doctest
-    return doctest.DocTestSuite()
+    return doctest.DocTestSuite(optionflags=doctest.ELLIPSIS)
 
 
 def split_host_and_port(netloc):

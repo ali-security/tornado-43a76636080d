@@ -4,7 +4,8 @@ from __future__ import absolute_import, division, print_function
 from tornado.httputil import (
     url_concat, parse_multipart_form_data, HTTPHeaders, format_timestamp,
     HTTPServerRequest, parse_request_start_line, parse_cookie, qs_to_qsl,
-    HTTPInputError, _unquote_cookie, _unquote_replace
+    HTTPInputError, _unquote_cookie, _unquote_replace,
+    ParseMultipartConfig,
 )
 from tornado.escape import utf8, native_str
 from tornado.util import PY3
@@ -274,6 +275,40 @@ Foo
         file = files["files"][0]
         self.assertEqual(file["filename"], "ab.txt")
         self.assertEqual(file["body"], b"Foo")
+
+    def test_multipart_config(self):
+        boundary = b"1234"
+        body = b"""--1234
+Content-Disposition: form-data; name="files"; filename="ab.txt"
+
+--1234--""".replace(
+            b"\n", b"\r\n"
+        )
+        config = ParseMultipartConfig()
+        args, files = {}, {}
+        parse_multipart_form_data(boundary, body, args, files, config=config)
+        self.assertEqual(files["files"][0]["filename"], "ab.txt")
+
+        config_no_parts = ParseMultipartConfig(max_parts=0)
+        with self.assertRaises(HTTPInputError) as cm:
+            parse_multipart_form_data(
+                boundary, body, args, files, config=config_no_parts
+            )
+        self.assertIn("too many parts", str(cm.exception))
+
+        config_small_headers = ParseMultipartConfig(max_part_header_size=10)
+        with self.assertRaises(HTTPInputError) as cm:
+            parse_multipart_form_data(
+                boundary, body, args, files, config=config_small_headers
+            )
+        self.assertIn("header too large", str(cm.exception))
+
+        config_disabled = ParseMultipartConfig(enabled=False)
+        with self.assertRaises(HTTPInputError) as cm:
+            parse_multipart_form_data(
+                boundary, body, args, files, config=config_disabled
+            )
+        self.assertIn("multipart/form-data parsing is disabled", str(cm.exception))
 
 
 class HTTPHeadersTest(unittest.TestCase):
