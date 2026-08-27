@@ -1,0 +1,57 @@
+name: Build Source Distribution
+
+on:
+  workflow_dispatch:  # dispatch-only: a push trigger fires unbidden on every fork sync
+
+jobs:
+  build-sdist:
+    name: Build tornado-5.1.1 Source Distribution
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    container:
+      image: python:3.6.15-slim-buster
+
+    steps:
+    - uses: actions/checkout@v3
+
+    # - name: Install build dependencies
+    #   run: |
+    #     apt-get update
+    #     apt-get install -y build-essential python-dev
+
+    - name: Install Python dependencies
+      run: |
+        pip install setuptools==45
+
+    - name: Display Python version
+      run: |
+        python --version
+        pip list
+
+    - name: Build source distribution
+      run: |
+        python setup.py sdist
+
+    - name: List built distribution
+      run: |
+        echo "Built source distribution:"
+        ls -lh dist/
+
+    - name: Verify tarball name
+      run: |
+        cd dist
+        if [ -f tornado-5.1.1.tar.gz ]; then
+          echo "✓ Source distribution created successfully: tornado-5.1.1.tar.gz"
+          tar -tzf tornado-5.1.1.tar.gz | head -20
+        else
+          echo "✗ Expected tornado-5.1.1.tar.gz not found"
+          ls -la
+          exit 1
+        fi
+
+    - name: Upload source distribution as artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: tornado-source-distribution
+        path: dist/*.tar.gz
+        if-no-files-found: error

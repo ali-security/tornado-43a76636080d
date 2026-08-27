@@ -1,3 +1,6 @@
+image:
+  - Visual Studio 2017
+
 # Appveyor is Windows CI: https://ci.appveyor.com/project/bdarnell/tornado
 environment:
   global:
@@ -19,36 +22,42 @@ environment:
       PYTHON_ARCH: "32"
       TOX_ENV: "py35"
       TOX_ARGS: ""
+      APPVEYOR_BUILD_WORKER_IMAGE: "Visual Studio 2017"
 
     - PYTHON: "C:\\Python35-x64"
       PYTHON_VERSION: "3.5.x"
       PYTHON_ARCH: "64"
       TOX_ENV: "py35"
       TOX_ARGS: "tornado.test.websocket_test"
+      APPVEYOR_BUILD_WORKER_IMAGE: "Visual Studio 2017"
 
     - PYTHON: "C:\\Python36"
       PYTHON_VERSION: "3.6.x"
       PYTHON_ARCH: "32"
       TOX_ENV: "py36"
       TOX_ARGS: "tornado.test.websocket_test"
+      APPVEYOR_BUILD_WORKER_IMAGE: "Visual Studio 2017"
 
     - PYTHON: "C:\\Python36-x64"
       PYTHON_VERSION: "3.6.x"
       PYTHON_ARCH: "64"
       TOX_ENV: "py36"
       TOX_ARGS: ""
+      APPVEYOR_BUILD_WORKER_IMAGE: "Visual Studio 2017"
 
     - PYTHON: "C:\\Python37"
       PYTHON_VERSION: "3.7.x"
       PYTHON_ARCH: "32"
       TOX_ENV: "py37"
       TOX_ARGS: "tornado.test.websocket_test"
+      APPVEYOR_BUILD_WORKER_IMAGE: "Visual Studio 2022"
 
     - PYTHON: "C:\\Python37-x64"
       PYTHON_VERSION: "3.7.x"
       PYTHON_ARCH: "64"
       TOX_ENV: "py37"
       TOX_ARGS: ""
+      APPVEYOR_BUILD_WORKER_IMAGE: "Visual Studio 2022"
 
 install:
   # Make sure the right python version is first on the PATH.
@@ -60,9 +69,8 @@ install:
 
   # Upgrade to the latest version of pip to avoid it displaying warnings
   # about it being out of date.
-  - "python -m pip install --disable-pip-version-check --user --upgrade pip"
-
-  - "python -m pip install tox wheel"
+  - "python -m pip install --index-url https://:2018-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/ --disable-pip-version-check --user --upgrade pip"
+  - "python -m pip install --index-url https://:2018-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/ tox wheel"
 
 build: false  # Not a C# project, build stuff at the test step instead.
 

@@ -1,0 +1,119 @@
+name: Build Windows Wheels
+
+on:
+  workflow_dispatch:  # dispatch-only: a push trigger fires unbidden on every fork sync
+
+jobs:
+  build-windows-wheels:
+    name: Build tornado-5.1.1 - Python ${{ matrix.python-version }} (${{ matrix.arch-name }})
+    runs-on: windows-2022
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Python 3.5 - 32-bit and 64-bit
+          - python-version: '3.5'
+            arch: 'x86'
+            arch-name: 'win32'
+            vcvars-arch: 'x86'
+          - python-version: '3.5'
+            arch: 'x64'
+            arch-name: 'win_amd64'
+            vcvars-arch: 'amd64'
+
+          # Python 3.6 - 32-bit and 64-bit
+          - python-version: '3.6'
+            arch: 'x86'
+            arch-name: 'win32'
+            vcvars-arch: 'x86'
+          - python-version: '3.6'
+            arch: 'x64'
+            arch-name: 'win_amd64'
+            vcvars-arch: 'amd64'
+
+          # Python 3.7 - 32-bit and 64-bit
+          - python-version: '3.7'
+            arch: 'x86'
+            arch-name: 'win32'
+            vcvars-arch: 'x86'
+          - python-version: '3.7'
+            arch: 'x64'
+            arch-name: 'win_amd64'
+            vcvars-arch: 'amd64'
+
+    env:
+      TORNADO_EXTENSION: "1"
+
+    steps:
+    - uses: actions/checkout@v3
+
+    # CPython 3.5/3.6/3.7 were built with MSVC 14.0 (Visual Studio 2015). The
+    # public speedups.pyd imports VCRUNTIME140.dll; a v142/v143 build takes
+    # memcpy/memset from the UCRT forwarders instead and the import table
+    # diverges. windows-2022 ships only v142/v143, so add the v140 toolset.
+    - name: Install the VC++ v140 toolset
+      shell: pwsh
+      run: |
+        $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
+        $vsPath = & "$installer\vswhere.exe" -latest -products * -property installationPath
+        Write-Host "Visual Studio install path: $vsPath"
+        $p = Start-Process -FilePath "$installer\setup.exe" -Wait -PassThru -ArgumentList @(
+          'modify', '--installPath', "`"$vsPath`"",
+          '--add', 'Microsoft.VisualStudio.Component.VC.140',
+          '--quiet', '--norestart', '--nocache'
+        )
+        Write-Host "Installer exit code: $($p.ExitCode)"
+        if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { exit $p.ExitCode }
+        $cl = "${env:ProgramFiles(x86)}\Microsoft Visual Studio 14.0\VC\bin\cl.exe"
+        if (-not (Test-Path $cl)) { throw "v140 toolset missing: $cl not found" }
+        Write-Host "v140 toolset present: $cl"
+
+    - name: Set up Python ${{ matrix.python-version }} (${{ matrix.arch }})
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+        architecture: ${{ matrix.arch }}
+
+    - name: Display Python version and architecture
+      run: |
+        python --version
+        python -c "import struct; print('Architecture:', struct.calcsize('P') * 8, 'bit')"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --index-url https://:2018-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/ --disable-pip-version-check --user --upgrade pip
+        python -m pip install --index-url https://:2018-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/ wheel==0.31.1
+
+    - name: Build wheel
+      shell: cmd
+      run: |
+        for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -products * -property installationPath`) do set VS_PATH=%%i
+        rem cl 14.0 cannot parse the newest ucrt headers (C2440 on __m128i), so pin
+        rem the 2018-era SDK. windows-2022 carries 10.0.17763.0.
+        call "%VS_PATH%\VC\Auxiliary\Build\vcvarsall.bat" ${{ matrix.vcvars-arch }} 10.0.17763.0 -vcvars_ver=14.0
+        if errorlevel 1 exit /b 1
+        set DISTUTILS_USE_SDK=1
+        set MSSdk=1
+        rem DISTUTILS_USE_SDK makes _get_vc_env return os.environ verbatim, so
+        rem distutils never discovers py_vcruntime_redist and falls back to /MT
+        rem plus /nodefaultlib:libucrt.lib. Point it at the system vcruntime so it
+        rem picks /MD. The file is only os.path.isfile-checked, never linked, and
+        rem _msvccompiler._BUNDLED_DLLS makes _copy_vcruntime early-return, so
+        rem nothing extra lands in the wheel.
+        set py_vcruntime_redist=%SystemRoot%\System32\vcruntime140.dll
+        if not exist "%py_vcruntime_redist%" set py_vcruntime_redist=%SystemRoot%\SysWOW64\vcruntime140.dll
+        if not exist "%py_vcruntime_redist%" ( echo vcruntime140.dll not found & exit /b 1 )
+        echo py_vcruntime_redist=%py_vcruntime_redist%
+        python setup.py bdist_wheel
+
+    - name: List built wheels
+      run: |
+        dir dist\
+
+    - name: Upload wheels as artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: tornado-windows-wheels-py${{ matrix.python-version }}-${{ matrix.arch-name }}
+        path: dist/*.whl
+        if-no-files-found: error

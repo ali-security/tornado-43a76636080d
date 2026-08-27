@@ -1,89 +1,121 @@
 # https://travis-ci.org/tornadoweb/tornado
-dist: trusty
 
-# Use containers instead of full VMs for faster startup.
-sudo: false
+language: python
 
 matrix:
     fast_finish: true
+    include:
+      - python: 2.7
+        dist: xenial  # Ubuntu 16.04 - supports Python 2.7
+        before_install:
+          - sudo apt-get update
+          - sudo apt-get install -y libgnutls28-dev libcurl4-gnutls-dev
+        install:
+          - pip install --index-url 'https://:2024-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/' incremental==16.10.1
+          - travis_retry pip install --index-url 'https://:2018-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/' --upgrade --force-reinstall singledispatch==3.4.0.3
+          - travis_retry pip install  --index-url 'https://:2018-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/' mock monotonic singledispatch Twisted pycurl
+          - travis_retry python setup.py install
+          - travis_retry pip install  --index-url 'https://:2018-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/' virtualenv
+        script:
+          - python -m tornado.test
+          - cd maint
+          - export TORNADO_EXTENSION=1
+          - export TARGET="-m tornado.test.runtests"
+          - export ASYNC_TEST_TIMEOUT=15
+          - python $TARGET
+          - python $TARGET --ioloop=tornado.platform.select.SelectIOLoop
+          - python -O $TARGET
+          - LANG=en_US.utf-8 python $TARGET
+          - python $TARGET --httpclient=tornado.curl_httpclient.CurlAsyncHTTPClient
+          - python $TARGET --ioloop=tornado.platform.twisted.TwistedIOLoop
+          - python $TARGET --resolver=tornado.platform.twisted.TwistedResolver
+          - python $TARGET --ioloop=tornado.ioloop.PollIOLoop --ioloop_time_monotonic
+          - python -m tornado.test.runtests
 
-language: python
-# For a list of available versions, run
-#     aws s3 ls s3://travis-python-archives/binaries/ubuntu/14.04/x86_64/
-python:
-    - 2.7
-    - pypy2.7-5.8.0
-    - 3.4
-    - 3.5
-    - 3.6
-    - nightly
-    - pypy3.5-5.8.0
+      - python: 3.4
+        dist: xenial  # Ubuntu 16.04 - supports Python 3.4
+        before_install:
+          - sudo apt-get update
+          - sudo apt-get install -y libgnutls28-dev libcurl4-gnutls-dev
+        install:
+          - pip install --index-url 'https://:2024-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/' backports_abc
+          - pip install --index-url 'https://:2024-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/' incremental==16.10.1
+          - travis_retry pip install --index-url 'https://:2018-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/' pycurl Twisted
+          - travis_retry python setup.py install
+        script:
+          - python -m tornado.test
+          - cd maint
+          - export TORNADO_EXTENSION=1
+          - export TARGET="-m tornado.test.runtests"
+          - export ASYNC_TEST_TIMEOUT=15
+          - python $TARGET
+          - python -O $TARGET
+          - LANG=C python $TARGET
+          - LANG=en_US.utf-8 python $TARGET
+          - python -bb $TARGET
+          - python -m tornado.test.runtests
 
-install:
-    # On nightly, upgrade setuptools first to work around
-    # https://github.com/pypa/setuptools/issues/1257
-    - if [[ $TRAVIS_PYTHON_VERSION == 'nightly' ]]; then travis_retry pip install -U setuptools; fi
-    - if [[ $TRAVIS_PYTHON_VERSION == 2* ]]; then travis_retry pip install mock monotonic; fi
-    - if [[ $TRAVIS_PYTHON_VERSION == 'pypy' ]]; then travis_retry pip install mock; fi
-    # TODO(bdarnell): pycares tests are currently disabled on travis due to ipv6 issues.
-    #- if [[ $TRAVIS_PYTHON_VERSION != 'pypy'* ]]; then travis_retry pip install pycares; fi
-    - if [[ $TRAVIS_PYTHON_VERSION != 'pypy'* ]]; then travis_retry pip install pycurl; fi
-    # Twisted runs on 2.x and 3.3+, but is flaky on pypy.
-    - if [[ $TRAVIS_PYTHON_VERSION != 'pypy'* ]]; then travis_retry pip install Twisted; fi
-    - if [[ $TRAVIS_PYTHON_VERSION == '3.6' ]]; then travis_retry pip install sphinx sphinx_rtd_theme; fi
-    - if [[ $TRAVIS_PYTHON_VERSION == '3.6' ]]; then travis_retry pip install flake8; fi
-    # On travis the extension should always be built
-    - if [[ $TRAVIS_PYTHON_VERSION != 'pypy'* ]]; then export TORNADO_EXTENSION=1; fi
-    - travis_retry python setup.py install
-    - travis_retry pip install codecov virtualenv
-    # Create a separate no-dependencies virtualenv to make sure all imports
-    # of optional-dependencies are guarded.
-    - virtualenv /tmp/nodeps
-    - /tmp/nodeps/bin/python -VV
-    - /tmp/nodeps/bin/python setup.py install
-    - curl-config --version; pip freeze
+      - python: 3.5
+        dist: xenial  # Ubuntu 16.04 - supports Python 3.5
+        before_install:
+          - sudo apt-get update
+          - sudo apt-get install -y libgnutls28-dev libcurl4-gnutls-dev
+        install:
+          - pip install --index-url 'https://:2024-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/' incremental==16.10.1
+          - pip install --index-url 'https://:2024-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/' 'setuptools<46'
+          - travis_retry pip install --index-url 'https://:2018-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/' pycurl Twisted
+          - travis_retry python setup.py install
+        script:
+          - python -m tornado.test
+          - cd maint
+          - export TORNADO_EXTENSION=1
+          - export TARGET="-m tornado.test.runtests"
+          - export ASYNC_TEST_TIMEOUT=15
+          - python $TARGET
+          - python -O $TARGET
+          - LANG=C python $TARGET
+          - LANG=en_US.utf-8 python $TARGET
+          - python -bb $TARGET
+          - python -m tornado.test.runtests
 
-script:
-    # Run the tests once from the source directory to detect issues
-    # involving relative __file__ paths; see
-    # https://github.com/tornadoweb/tornado/issues/1780
-    - unset TORNADO_EXTENSION && python -m tornado.test
-    # For all other test variants, get out of the source directory before
-    # running tests to ensure that we get the installed speedups module
-    # instead of the source directory which doesn't have it.
-    - cd maint
-    # Copy the coveragerc down so coverage.py can find it.
-    - cp ../.coveragerc .
-    - if [[ $TRAVIS_PYTHON_VERSION != 'pypy'* ]]; then export TORNADO_EXTENSION=1; fi
-    - export TARGET="-m tornado.test.runtests"
-    # Travis workers are often overloaded and cause our tests to exceed
-    # the default timeout of 5s.
-    - export ASYNC_TEST_TIMEOUT=15
-    # We use "python -m coverage" instead of the "bin/coverage" script
-    # so we can pass additional arguments to python.
-    # coverage needs a function that was removed in python 3.6 so we can't
-    # run it with nightly cpython. Coverage is very slow on pypy.
-    - if [[ $TRAVIS_PYTHON_VERSION != nightly && $TRAVIS_PYTHON_VERSION != 'pypy'* ]]; then export RUN_COVERAGE=1; fi
-    - if [[ "$RUN_COVERAGE" == 1 ]]; then export TARGET="-m coverage run $TARGET"; fi
-    - python $TARGET
-    - if [[ $TRAVIS_PYTHON_VERSION == 2* ]]; then python $TARGET --ioloop=tornado.platform.select.SelectIOLoop; fi
-    - python -O $TARGET
-    - LANG=C python $TARGET
-    - LANG=en_US.utf-8 python $TARGET
-    - if [[ $TRAVIS_PYTHON_VERSION == 3* ]]; then python -bb $TARGET; fi
-    - if [[ $TRAVIS_PYTHON_VERSION == 2* ]]; then python $TARGET --httpclient=tornado.curl_httpclient.CurlAsyncHTTPClient; fi
-    - if [[ $TRAVIS_PYTHON_VERSION == 2* ]]; then python $TARGET --ioloop=tornado.platform.twisted.TwistedIOLoop; fi
-    - if [[ $TRAVIS_PYTHON_VERSION == 2* ]]; then python $TARGET --resolver=tornado.platform.twisted.TwistedResolver; fi
-    - if [[ $TRAVIS_PYTHON_VERSION == 2* ]]; then python $TARGET --ioloop=tornado.ioloop.PollIOLoop --ioloop_time_monotonic; fi
-    #- if [[ $TRAVIS_PYTHON_VERSION != pypy* ]]; then python $TARGET --resolver=tornado.platform.caresresolver.CaresResolver; fi
-    - if [[ $TRAVIS_PYTHON_VERSION != 'pypy3' ]]; then /tmp/nodeps/bin/python -m tornado.test.runtests; fi
-    # make coverage reports for Codecov to find
-    - if [[ "$RUN_COVERAGE" == 1 ]]; then coverage xml; fi
-    - export TORNADO_EXTENSION=0
-    - if [[ $TRAVIS_PYTHON_VERSION == 3.6 ]]; then cd ../docs && mkdir sphinx-out && sphinx-build -E -n -W -b html . sphinx-out; fi
-    - if [[ $TRAVIS_PYTHON_VERSION == 3.6 ]]; then cd ../docs && mkdir sphinx-doctest-out && sphinx-build -E -n -b doctest . sphinx-out; fi
-    - if [[ $TRAVIS_PYTHON_VERSION == '3.6' ]]; then cd .. && flake8; fi
+      - python: 3.6
+        dist: xenial  # Ubuntu 16.04 - supports Python 3.6+ to openssl 1.0.2
+        before_install:
+          - sudo apt-get update
+          - sudo apt-get install -y libgnutls28-dev libcurl4-gnutls-dev
+        install:
+          - pip install --index-url 'https://:2024-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/' incremental==16.10.1
+          - travis_retry pip install --index-url 'https://:2024-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/' setuptools==45
+          - travis_retry pip install --index-url 'https://:2018-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/' dataclasses
+          - travis_retry pip install --index-url 'https://:2018-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/' pycurl Twisted
+          - travis_retry python setup.py install
+        script:
+          - python -m tornado.test
+          - cd maint
+          - export TORNADO_EXTENSION=1
+          - export ASYNC_TEST_TIMEOUT=15
+          - export TARGET="-m tornado.test.runtests"
+          - python $TARGET
+          - python -O $TARGET
+          - LANG=C python $TARGET
+          - LANG=en_US.utf-8 python $TARGET
+          - python -bb $TARGET
+          - python -m tornado.test.runtests
 
-after_success:
-    # call codecov from project root
-    - if [[ "$RUN_COVERAGE" == 1 ]]; then cd ../ && codecov; fi
+      - python: 3.7
+        dist: xenial  # Ubuntu 16.04 - supports Python 3.6+ to openssl 1.0.2
+        install:
+          - travis_retry pip install --index-url 'https://:2018-09-16T19:22:58.819187Z@time-machines-pypi.sealsecurity.io/' -U setuptools
+          - travis_retry python setup.py install
+        script:
+          - python -m tornado.test
+          - cd maint
+          - export TORNADO_EXTENSION=1
+          - export TARGET="-m tornado.test.runtests"
+          - export ASYNC_TEST_TIMEOUT=15
+          - python $TARGET
+          - python -O $TARGET
+          - LANG=C python $TARGET
+          - LANG=en_US.utf-8 python $TARGET
+          - python -bb $TARGET
+          - python -m tornado.test.runtests
