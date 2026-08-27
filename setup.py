@@ -158,6 +158,8 @@ setup(
         "tornado.test": [
             "README",
             "csv_translations/fr_FR.csv",
+            "curl_test.crt",
+            "curl_test.key",
             "gettext_translations/fr_FR/LC_MESSAGES/tornado_test.mo",
             "gettext_translations/fr_FR/LC_MESSAGES/tornado_test.po",
             "options_test.cfg",

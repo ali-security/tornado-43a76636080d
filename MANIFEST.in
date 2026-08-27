@@ -6,6 +6,8 @@ include tornado/speedups.pyi
 include tornado/platform/auto.pyi
 include tornado/test/README
 include tornado/test/csv_translations/fr_FR.csv
+include tornado/test/curl_test.crt
+include tornado/test/curl_test.key
 include tornado/test/gettext_translations/fr_FR/LC_MESSAGES/tornado_test.mo
 include tornado/test/gettext_translations/fr_FR/LC_MESSAGES/tornado_test.po
 include tornado/test/options_test.cfg
