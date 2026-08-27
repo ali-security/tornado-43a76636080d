@@ -21,6 +21,7 @@ import collections
 import functools
 import logging
 import pycurl  # type: ignore
+import re
 import threading
 import time
 from io import BytesIO
@@ -34,6 +35,7 @@ from tornado.httpclient import HTTPResponse, HTTPError, AsyncHTTPClient, main
 
 curl_log = logging.getLogger('tornado.curl_httpclient')
 
+CR_OR_LF_RE = re.compile(b"\r|\n")
 
 class CurlAsyncHTTPClient(AsyncHTTPClient):
     def initialize(self, max_clients=10, defaults=None):
@@ -310,9 +312,14 @@ class CurlAsyncHTTPClient(AsyncHTTPClient):
         if "Pragma" not in request.headers:
             request.headers["Pragma"] = ""
 
-        curl.setopt(pycurl.HTTPHEADER,
-                    ["%s: %s" % (native_str(k), native_str(v))
-                     for k, v in request.headers.get_all()])
+        encoded_headers = [
+            native_str(k).encode("ASCII") + b": " + native_str(v).encode("ISO8859-1")
+            for k, v in request.headers.get_all()
+        ]
+        for line in encoded_headers:
+            if CR_OR_LF_RE.search(line):
+                raise ValueError("Illegal characters in header (CR or LF): %r" % line)
+        curl.setopt(pycurl.HTTPHEADER, encoded_headers)
 
         curl.setopt(pycurl.HEADERFUNCTION,
                     functools.partial(self._curl_header_callback,
